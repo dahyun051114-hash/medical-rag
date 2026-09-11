@@ -76,7 +76,7 @@ def hybrid_search(query: str, embedding: list, match_count: int = 15) -> list:
         "match_count":     match_count,
         "vector_weight":   0.7,
         "fts_weight":      0.3,
-        "source_filter":   "pdf"
+        "source_filter":   None
     }).execute()
     return result.data or []
 
