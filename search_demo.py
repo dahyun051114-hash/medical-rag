@@ -61,6 +61,17 @@ def cache_set(query: str, answer: str):
     except Exception:
         pass
 
+def log_search(query: str, mode: str, answer: str, elapsed: float):
+    try:
+        supabase.table("search_log").insert({
+            "query": query,
+            "mode": mode,
+            "answer": answer,
+            "elapsed_sec": elapsed,
+        }).execute()
+    except Exception:
+        pass
+
 
 # ── 파이프라인 함수들 ────────────────────────────────────────────────
 def get_embedding(text: str) -> list:
@@ -198,6 +209,10 @@ st.caption("의학용어 학습 도우미 | Gemini + Supabase")
 st.divider()
 
 rag_mode = st.toggle("✨ 스마트 검색 모드", value=True)
+if rag_mode:
+    st.caption("✨ 스마트 검색 모드 활성화")
+else:
+    st.caption("💬 일반 모드")
 
 query = st.text_input(
     "질문을 입력하세요",
@@ -227,6 +242,7 @@ if search_btn:
                         st.success("✅ 답변")
                         st.markdown(answer)
                         st.caption(f"⏱️ 응답 시간: {elapsed}초")
+                        log_search(query.strip(), "스마트검색", answer, elapsed)
                         if len(expanded) > 1:
                             with st.expander("🔤 동의어 확장 결과 보기"):
                                 st.write("입력 질문에서 아래 용어들로 검색을 확장했습니다:")
@@ -237,6 +253,7 @@ if search_btn:
                     st.success("✅ 답변")
                     st.markdown(answer)
                     st.caption(f"⏱️ 응답 시간: {elapsed}초")
+                    log_search(query.strip(), "일반모드", answer, elapsed)
 
             except Exception as e:
                 err = str(e)
