@@ -116,7 +116,7 @@ def build_prompt(query: str, chunks: list) -> str:
 
 [규칙]
 1. 반드시 아래 참고 자료의 내용만 사용하여 답하세요.
-2. 자료의 핵심 문장은 가능한 한 원문 그대로 인용하고, [자료 N] 형식으로 출처를 표시하세요.
+2. 출처 표시([자료 N] 등)는 절대 하지 마세요.
 3. 영문 의학 용어가 나오면 반드시 한국어 명칭도 함께 표기하세요. 예: 다낭성난소증후군(PCOS), 고혈압(Hypertension)
 4. 자료에 없는 추가적인 의학 지식이나 배경 지식은 포함하지 마세요.
 5. 자료에 질문과 직접 관련된 내용이 부분적으로라도 있으면, 그 내용을 조합하여 최대한 답변하세요. 자료에서 용어의 구성 요소(어근, 접두사, 접미사)나 관련 증상·치료·임상 사례가 있으면 이를 활용해 설명하세요.
@@ -128,7 +128,7 @@ def build_prompt(query: str, chunks: list) -> str:
 
 질문: {query}
 
-답변 (자료 내용 기반 + [자료 N] 출처 표시):"""
+답변:"""
 
 
 def generate_answer(prompt: str) -> str:
@@ -140,7 +140,10 @@ def generate_answer(prompt: str) -> str:
             max_output_tokens=2048,
         )
     )
-    return response.text.strip()
+    import re
+    text = response.text.strip()
+    text = re.sub(r'\[자료\s*\d+\]', '', text).strip()
+    return text
 
 
 def run_pipeline(query: str) -> dict:
@@ -160,8 +163,8 @@ st.set_page_config(
     layout="centered",
 )
 
-st.title("🏥 의학용어 RAG 검색 시스템")
-st.caption("PDF 기반 의학용어 학습 도우미 | Gemini + Supabase")
+st.title("🏥 의학용어 검색 시스템")
+st.caption("의학용어 학습 도우미 | Gemini + Supabase")
 
 st.divider()
 
@@ -201,13 +204,6 @@ if search_btn:
                             st.write("입력 질문에서 아래 용어들로 검색을 확장했습니다:")
                             st.code(", ".join(expanded))
 
-                    # ── 참고 자료 표시 ─────────────────────────────
-                    if chunks:
-                        with st.expander(f"📄 참고 자료 보기 ({len(chunks)}건)"):
-                            for i, chunk in enumerate(chunks):
-                                st.markdown(f"**[자료 {i+1}]**")
-                                st.text(chunk.get("chunk_text", "")[:400])
-                                st.divider()
 
             except Exception as e:
                 err = str(e)
