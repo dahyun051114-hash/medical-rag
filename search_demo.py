@@ -73,6 +73,27 @@ def log_search(query: str, mode: str, answer: str, elapsed: float):
         pass
 
 
+# ── 관련 의학용어 추출 ───────────────────────────────────────────────
+def get_related_terms(query: str, answer: str) -> list:
+    try:
+        prompt = f"""다음 의학용어 질문과 답변을 읽고, 관련된 의학용어 5개만 뽑아줘.
+반드시 아래 형식으로만 답해: 용어1, 용어2, 용어3, 용어4, 용어5
+
+질문: {query}
+답변: {answer[:500]}
+
+관련 의학용어:"""
+        response = client.models.generate_content(
+            model=FLASH_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(temperature=0, max_output_tokens=100)
+        )
+        terms = [t.strip() for t in response.text.strip().split(",") if t.strip()]
+        return terms[:5]
+    except Exception:
+        return []
+
+
 # ── 파이프라인 함수들 ────────────────────────────────────────────────
 def get_embedding(text: str) -> list:
     for attempt in range(3):
@@ -203,6 +224,10 @@ st.set_page_config(
     layout="centered",
 )
 
+# 세션 상태로 검색어 관리 (관련용어 클릭 시 검색용)
+if "search_query" not in st.session_state:
+    st.session_state.search_query = ""
+
 st.title("🏥 의학용어 검색 시스템")
 st.caption("의학용어 학습 도우미 | Gemini + Supabase")
 
@@ -214,53 +239,72 @@ query = st.text_input(
     "질문을 입력하세요",
     placeholder="예: 고혈압이란 무엇인가요? / What is hypertension?",
     max_chars=200,
+    value=st.session_state.search_query,
+    key="query_input",
 )
 
 search_btn = st.button("🔍 검색", type="primary", use_container_width=True)
 
-if search_btn:
-    if not query.strip():
-        st.warning("질문을 입력해주세요!")
-    else:
-        with st.spinner("검색 중... 잠시만 기다려주세요 🔄"):
-            try:
-                t0 = time.time()
+if search_btn and query.strip():
+    st.session_state.search_query = ""
+    with st.spinner("검색 중... 잠시만 기다려주세요 🔄"):
+        try:
+            t0 = time.time()
 
-                if rag_mode:
-                    result   = run_pipeline(query.strip())
-                    elapsed  = round(time.time() - t0, 1)
-                    answer   = result.get("answer")
-                    expanded = result.get("expanded", [])
+            if rag_mode:
+                result   = run_pipeline(query.strip())
+                elapsed  = round(time.time() - t0, 1)
+                answer   = result.get("answer")
+                expanded = result.get("expanded", [])
 
-                    if answer is None:
-                        st.info("📭 제공된 자료에서 해당 정보를 찾을 수 없습니다.")
-                    else:
-                        st.success("✅ 답변")
-                        st.markdown(answer)
-                        st.caption(f"⏱️ 응답 시간: {elapsed}초")
-                        log_search(query.strip(), "스마트검색", answer, elapsed)
-                        if len(expanded) > 1:
-                            with st.expander("🔤 동의어 확장 결과 보기"):
-                                st.write("입력 질문에서 아래 용어들로 검색을 확장했습니다:")
-                                st.code(", ".join(expanded))
+                if answer is None:
+                    st.info("📭 제공된 자료에서 해당 정보를 찾을 수 없습니다.")
                 else:
-                    answer  = run_direct(query.strip())
-                    elapsed = round(time.time() - t0, 1)
                     st.success("✅ 답변")
                     st.markdown(answer)
                     st.caption(f"⏱️ 응답 시간: {elapsed}초")
-                    log_search(query.strip(), "일반모드", answer, elapsed)
+                    log_search(query.strip(), "스마트검색", answer, elapsed)
 
-            except Exception as e:
-                err = str(e)
-                if "429" in err or "quota" in err.lower() or "rate" in err.lower():
-                    st.error("⚠️ API 호출 한도를 초과했습니다. 잠시 후 다시 시도해주세요.")
-                elif "timeout" in err.lower() or "deadline" in err.lower():
-                    st.error("⏰ 요청 시간이 초과됐습니다. 다시 시도해주세요.")
-                elif "SUPABASE" in err.upper() or "connection" in err.lower():
-                    st.error("🔌 데이터베이스 연결에 실패했습니다. 잠시 후 다시 시도해주세요.")
-                else:
-                    st.error(f"❌ 오류가 발생했습니다: {err}")
+                    # 관련 의학용어
+                    terms = get_related_terms(query.strip(), answer)
+                    if terms:
+                        st.markdown("**🏷️ 관련 의학용어**")
+                        cols = st.columns(len(terms))
+                        for i, term in enumerate(terms):
+                            if cols[i].button(term, key=f"term_{i}"):
+                                st.session_state.search_query = term
+                                st.rerun()
+            else:
+                answer  = run_direct(query.strip())
+                elapsed = round(time.time() - t0, 1)
+                st.success("✅ 답변")
+                st.markdown(answer)
+                st.caption(f"⏱️ 응답 시간: {elapsed}초")
+                log_search(query.strip(), "일반모드", answer, elapsed)
+
+                # 관련 의학용어
+                terms = get_related_terms(query.strip(), answer)
+                if terms:
+                    st.markdown("**🏷️ 관련 의학용어**")
+                    cols = st.columns(len(terms))
+                    for i, term in enumerate(terms):
+                        if cols[i].button(term, key=f"term_{i}"):
+                            st.session_state.search_query = term
+                            st.rerun()
+
+        except Exception as e:
+            err = str(e)
+            if "429" in err or "quota" in err.lower() or "rate" in err.lower():
+                st.error("⚠️ API 호출 한도를 초과했습니다. 잠시 후 다시 시도해주세요.")
+            elif "timeout" in err.lower() or "deadline" in err.lower():
+                st.error("⏰ 요청 시간이 초과됐습니다. 다시 시도해주세요.")
+            elif "SUPABASE" in err.upper() or "connection" in err.lower():
+                st.error("🔌 데이터베이스 연결에 실패했습니다. 잠시 후 다시 시도해주세요.")
+            else:
+                st.error(f"❌ 오류가 발생했습니다: {err}")
+
+elif search_btn:
+    st.warning("질문을 입력해주세요!")
 
 st.divider()
 st.markdown(
