@@ -198,6 +198,10 @@ st.caption("의학용어 학습 도우미 | Gemini + Supabase")
 st.divider()
 
 rag_mode = st.toggle("✨ 스마트 검색 모드", value=True)
+if rag_mode:
+    st.caption("✨ 스마트 검색 모드 활성화")
+else:
+    st.caption("💬 일반 모드")
 
 query = st.text_input(
     "질문을 입력하세요",
