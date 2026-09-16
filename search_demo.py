@@ -197,7 +197,7 @@ st.caption("의학용어 학습 도우미 | Gemini + Supabase")
 
 st.divider()
 
-rag_mode = st.toggle("📚 RAG 모드 (교재 기반 검색)", value=True)
+rag_mode = st.toggle("✨ 스마트 검색 모드", value=True)
 
 query = st.text_input(
     "질문을 입력하세요",
@@ -213,12 +213,12 @@ if search_btn:
     else:
         with st.spinner("검색 중... 잠시만 기다려주세요 🔄"):
             try:
-                t0      = time.time()
+                t0 = time.time()
 
                 if rag_mode:
-                    result  = run_pipeline(query.strip())
-                    elapsed = round(time.time() - t0, 1)
-                    answer  = result.get("answer")
+                    result   = run_pipeline(query.strip())
+                    elapsed  = round(time.time() - t0, 1)
+                    answer   = result.get("answer")
                     expanded = result.get("expanded", [])
 
                     if answer is None:
