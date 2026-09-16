@@ -6,11 +6,11 @@ UI:   st.text_input / st.button / st.expander
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
-import os, sys, time, json
+import os, sys, time, json, re
 import streamlit as st
 from pathlib import Path
 
-# ── API 키 로드 (Streamlit Cloud: st.secrets / 로컬: .env) ──────────
+# ── API 키 로드 ──────────────────────────────────────────────────────
 def load_secrets():
     try:
         return (
@@ -29,12 +29,10 @@ def load_secrets():
 
 GEMINI_API_KEY, SUPABASE_URL, SUPABASE_KEY = load_secrets()
 
-# ── 동의어 사전 로드 ────────────────────────────────────────────────
 _SYN_PATH = Path(__file__).parent / "synonyms.json"
 with open(_SYN_PATH, encoding="utf-8") as _f:
     SYNONYMS = json.load(_f)
 
-# ── 라이브러리 임포트 ───────────────────────────────────────────────
 from supabase import create_client
 from google import genai
 from google.genai import types
@@ -47,7 +45,24 @@ EMBED_MODEL = "gemini-embedding-001"
 FLASH_MODEL = "gemini-2.5-flash"
 
 
-# ── 파이프라인 함수들 ───────────────────────────────────────────────
+# ── Supabase 캐시 ────────────────────────────────────────────────────
+def cache_get(query: str):
+    try:
+        res = supabase.table("rag_cache").select("answer").eq("query", query).execute()
+        if res.data:
+            return res.data[0]["answer"]
+    except Exception:
+        pass
+    return None
+
+def cache_set(query: str, answer: str):
+    try:
+        supabase.table("rag_cache").upsert({"query": query, "answer": answer}).execute()
+    except Exception:
+        pass
+
+
+# ── 파이프라인 함수들 ────────────────────────────────────────────────
 def get_embedding(text: str) -> list:
     for attempt in range(3):
         try:
@@ -68,7 +83,6 @@ def get_embedding(text: str) -> list:
     raise RuntimeError("임베딩 생성 실패 (rate limit)")
 
 
-
 def hybrid_search(query: str, embedding: list, match_count: int = 15) -> list:
     result = supabase.rpc("hybrid_search", {
         "query_text":      query,
@@ -83,28 +97,21 @@ def hybrid_search(query: str, embedding: list, match_count: int = 15) -> list:
 
 def expanded_rrf_search(query: str, match_count: int = 10) -> list:
     expanded = expand_query(query)
-    # expand_query가 synonyms.json 기반으로 올바르게 확장함
     search_queries = list(dict.fromkeys(expanded))[:4]
-
     rrf_scores, rrf_data = {}, {}
     for eq in search_queries:
         try:
             emb     = get_embedding(eq)
             results = hybrid_search(eq, emb, match_count)
-            print(f"[DEBUG] '{eq}' → {len(results)}건")
             for rank, item in enumerate(results):
                 cid = item["id"]
                 rrf_scores[cid] = rrf_scores.get(cid, 0) + 1.0 / (60 + rank + 1)
                 rrf_data[cid]   = item
             time.sleep(0.3)
-        except Exception as e:
-            print(f"[DEBUG ERROR] '{eq}' 실패: {e}")
+        except Exception:
             continue
     sorted_ids = sorted(rrf_scores, key=lambda x: rrf_scores[x], reverse=True)
     return [rrf_data[cid] for cid in sorted_ids[:match_count]]
-
-
-
 
 
 def build_prompt(query: str, chunks: list) -> str:
@@ -117,9 +124,9 @@ def build_prompt(query: str, chunks: list) -> str:
 [규칙]
 1. 반드시 아래 참고 자료의 내용만 사용하여 답하세요.
 2. 출처 표시([자료 N] 등)는 절대 하지 마세요.
-3. 영문 의학 용어가 나오면 반드시 한국어 명칭도 함께 표기하세요. 예: 다낭성난소증후군(PCOS), 고혈압(Hypertension)
+3. 영문 의학 용어가 나오면 반드시 한국어 명칭도 함께 표기하세요.
 4. 자료에 없는 추가적인 의학 지식이나 배경 지식은 포함하지 마세요.
-5. 자료에 질문과 직접 관련된 내용이 부분적으로라도 있으면, 그 내용을 조합하여 최대한 답변하세요. 자료에서 용어의 구성 요소(어근, 접두사, 접미사)나 관련 증상·치료·임상 사례가 있으면 이를 활용해 설명하세요.
+5. 자료에 질문과 직접 관련된 내용이 부분적으로라도 있으면, 그 내용을 조합하여 최대한 답변하세요.
 6. 자료에 전혀 관련 내용이 없을 때만 "제공된 자료에서 해당 정보를 찾을 수 없습니다."라고 답하세요.
 
 ===== 참고 자료 =====
@@ -140,23 +147,45 @@ def generate_answer(prompt: str) -> str:
             max_output_tokens=2048,
         )
     )
-    import re
     text = response.text.strip()
     text = re.sub(r'\[자료\s*\d+\]', '', text).strip()
     return text
 
 
 def run_pipeline(query: str) -> dict:
+    cached = cache_get(query)
+    if cached:
+        return {"answer": cached, "chunks": [], "expanded": []}
     expanded = expand_query(query)[:3]
     chunks   = expanded_rrf_search(query)
     if not chunks:
         return {"answer": None, "chunks": [], "expanded": expanded}
     prompt = build_prompt(query, chunks)
     answer = generate_answer(prompt)
+    cache_set(query, answer)
     return {"answer": answer, "chunks": chunks, "expanded": expanded}
 
 
-# ── Streamlit UI ────────────────────────────────────────────────────
+def run_direct(query: str) -> str:
+    prompt = f"""당신은 의학용어 전문 교육 도우미입니다.
+아래 질문에 대해 알고 있는 의학 지식을 바탕으로 답변해주세요.
+영문 의학 용어가 나오면 반드시 한국어 명칭도 함께 표기하세요.
+
+질문: {query}
+
+답변:"""
+    response = client.models.generate_content(
+        model=FLASH_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0.3,
+            max_output_tokens=2048,
+        )
+    )
+    return response.text.strip()
+
+
+# ── Streamlit UI ─────────────────────────────────────────────────────
 st.set_page_config(
     page_title="의학용어 검색",
     page_icon="🏥",
@@ -167,6 +196,8 @@ st.title("🏥 의학용어 검색 시스템")
 st.caption("의학용어 학습 도우미 | Gemini + Supabase")
 
 st.divider()
+
+rag_mode = st.toggle("📚 RAG 모드 (교재 기반 검색)", value=True)
 
 query = st.text_input(
     "질문을 입력하세요",
@@ -182,28 +213,30 @@ if search_btn:
     else:
         with st.spinner("검색 중... 잠시만 기다려주세요 🔄"):
             try:
-                t0     = time.time()
-                result = run_pipeline(query.strip())
-                elapsed = round(time.time() - t0, 1)
+                t0      = time.time()
 
-                answer = result.get("answer")
-                chunks = result.get("chunks", [])
-                expanded = result.get("expanded", [])
+                if rag_mode:
+                    result  = run_pipeline(query.strip())
+                    elapsed = round(time.time() - t0, 1)
+                    answer  = result.get("answer")
+                    expanded = result.get("expanded", [])
 
-                # ── 답변 표시 ──────────────────────────────────────
-                if answer is None:
-                    st.info("📭 제공된 자료에서 해당 정보를 찾을 수 없습니다.")
+                    if answer is None:
+                        st.info("📭 제공된 자료에서 해당 정보를 찾을 수 없습니다.")
+                    else:
+                        st.success("✅ 답변")
+                        st.markdown(answer)
+                        st.caption(f"⏱️ 응답 시간: {elapsed}초")
+                        if len(expanded) > 1:
+                            with st.expander("🔤 동의어 확장 결과 보기"):
+                                st.write("입력 질문에서 아래 용어들로 검색을 확장했습니다:")
+                                st.code(", ".join(expanded))
                 else:
+                    answer  = run_direct(query.strip())
+                    elapsed = round(time.time() - t0, 1)
                     st.success("✅ 답변")
                     st.markdown(answer)
                     st.caption(f"⏱️ 응답 시간: {elapsed}초")
-
-                    # ── 동의어 확장 표시 ───────────────────────────
-                    if len(expanded) > 1:
-                        with st.expander("🔤 동의어 확장 결과 보기"):
-                            st.write("입력 질문에서 아래 용어들로 검색을 확장했습니다:")
-                            st.code(", ".join(expanded))
-
 
             except Exception as e:
                 err = str(e)
