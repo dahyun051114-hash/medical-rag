@@ -10,7 +10,6 @@ import os, sys, time, json, re
 import streamlit as st
 from pathlib import Path
 
-# ── API 키 로드 ──────────────────────────────────────────────────────
 def load_secrets():
     try:
         return (
@@ -45,7 +44,6 @@ EMBED_MODEL = "gemini-embedding-001"
 FLASH_MODEL = "gemini-2.5-flash"
 
 
-# ── Supabase 캐시 ────────────────────────────────────────────────────
 def cache_get(query: str):
     try:
         res = supabase.table("rag_cache").select("answer").eq("query", query).execute()
@@ -72,8 +70,6 @@ def log_search(query: str, mode: str, answer: str, elapsed: float):
     except Exception:
         pass
 
-
-# ── 관련 의학용어 추출 ───────────────────────────────────────────────
 def get_related_terms(query: str, answer: str) -> list:
     try:
         prompt = f"""다음 의학용어 질문과 답변을 읽고, 관련된 의학용어 5개만 뽑아줘.
@@ -94,7 +90,6 @@ def get_related_terms(query: str, answer: str) -> list:
         return []
 
 
-# ── 파이프라인 함수들 ────────────────────────────────────────────────
 def get_embedding(text: str) -> list:
     for attempt in range(3):
         try:
@@ -217,14 +212,12 @@ def run_direct(query: str) -> str:
     return response.text.strip()
 
 
-# ── Streamlit UI ─────────────────────────────────────────────────────
 st.set_page_config(
     page_title="의학용어 검색",
     page_icon="🏥",
     layout="centered",
 )
 
-# 세션 상태로 검색어 관리 (관련용어 클릭 시 검색용)
 if "search_query" not in st.session_state:
     st.session_state.search_query = ""
 
@@ -265,7 +258,6 @@ if search_btn and query.strip():
                     st.caption(f"⏱️ 응답 시간: {elapsed}초")
                     log_search(query.strip(), "스마트검색", answer, elapsed)
 
-                    # 관련 의학용어
                     terms = get_related_terms(query.strip(), answer)
                     if terms:
                         st.markdown("**🏷️ 관련 의학용어**")
@@ -282,7 +274,6 @@ if search_btn and query.strip():
                 st.caption(f"⏱️ 응답 시간: {elapsed}초")
                 log_search(query.strip(), "일반모드", answer, elapsed)
 
-                # 관련 의학용어
                 terms = get_related_terms(query.strip(), answer)
                 if terms:
                     st.markdown("**🏷️ 관련 의학용어**")
