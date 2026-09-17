@@ -221,6 +221,8 @@ st.set_page_config(
 
 if "search_query" not in st.session_state:
     st.session_state.search_query = ""
+if "auto_search" not in st.session_state:
+    st.session_state.auto_search = False
 
 st.title("🏥 의학용어 검색 시스템")
 st.caption("의학용어 학습 도우미 | Gemini + Supabase")
@@ -238,8 +240,10 @@ query = st.text_input(
 )
 
 search_btn = st.button("🔍 검색", type="primary", use_container_width=True)
+do_search = search_btn or st.session_state.auto_search
 
-if search_btn and query.strip():
+if do_search and query.strip():
+    st.session_state.auto_search = False
     st.session_state.search_query = ""
     with st.spinner("검색 중... 잠시만 기다려주세요 🔄"):
         try:
@@ -266,6 +270,7 @@ if search_btn and query.strip():
                         for i, term in enumerate(terms):
                             if cols[i].button(term, key=f"term_{i}"):
                                 st.session_state.search_query = term
+                                st.session_state.auto_search = True
                                 st.rerun()
             else:
                 answer  = run_direct(query.strip())
@@ -282,6 +287,7 @@ if search_btn and query.strip():
                     for i, term in enumerate(terms):
                         if cols[i].button(term, key=f"term_{i}"):
                             st.session_state.search_query = term
+                            st.session_state.auto_search = True
                             st.rerun()
 
         except Exception as e:
