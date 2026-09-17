@@ -72,22 +72,14 @@ def log_search(query: str, mode: str, answer: str, elapsed: float):
 
 def get_related_terms(query: str, answer: str) -> list:
     try:
-        prompt = f"""다음 의학용어 질문과 답변을 읽고, 관련된 의학용어 5개만 뽑아줘.
+                prompt = f"""다음 의학용어 질문과 답변을 읽고, 질문에 나온 용어와 다른 관련 의학용어 5개만 뽑아줘.
+질문에 나온 단어나 그 번역어는 제외하고, 연관된 다른 용어만 뽑아줘.
 반드시 아래 형식으로만 답해: 용어1, 용어2, 용어3, 용어4, 용어5
 
 질문: {query}
 답변: {answer[:500]}
 
-관련 의학용어:"""
-        response = client.models.generate_content(
-            model=FLASH_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(temperature=0, max_output_tokens=100)
-        )
-        terms = [t.strip() for t in response.text.strip().split(",") if t.strip()]
-        return terms[:5]
-    except Exception:
-        return []
+관련 의학용어 (질문 단어 제외):"""
 
 
 def get_embedding(text: str) -> list:
