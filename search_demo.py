@@ -266,6 +266,16 @@ if do_search and query.strip():
         answer = cached
         st.success("✅ 답변")
         st.markdown(answer)
+        related = get_related_terms(query.strip(), answer)
+        if related:
+            st.markdown("**🔗 관련 의학용어**")
+            cols = st.columns(len(related))
+            for i, term in enumerate(related):
+                with cols[i]:
+                    if st.button(term, key=f"related_c_{i}_{term}"):
+                        st.session_state.search_query = term
+                        st.session_state.auto_search = True
+                        st.rerun()
     else:
         with st.spinner("검색 중... 잠시만 기다려주세요 🔄"):
             try:
