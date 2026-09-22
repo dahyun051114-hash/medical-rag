@@ -220,6 +220,8 @@ def get_related_terms(query: str, answer: str) -> list:
 # ── Session State 초기화 ────────────────────────────────────────────
 if "auto_search" not in st.session_state:
     st.session_state.auto_search = False
+if "search_query" not in st.session_state:
+    st.session_state.search_query = ""
 
 
 # ── Streamlit UI ────────────────────────────────────────────────────
@@ -237,12 +239,12 @@ st.divider()
 # ── 스마트 검색 토글 ────────────────────────────────────────────────
 rag_mode = st.toggle("✨ 스마트 검색 모드", value=True)
 
-# ── 검색창 (key 사용 → 연관 용어 클릭 시 직접 위젯 state 업데이트) ──
+# ── 검색창 ──────────────────────────────────────────────────────────
 query = st.text_input(
     "질문을 입력하세요",
+    value=st.session_state.search_query,
     placeholder="예: 고혈압이란 무엇인가요? / What is hypertension?",
     max_chars=200,
-    key="query_input",
 )
 
 search_btn = st.button("🔍 검색", type="primary", use_container_width=True)
@@ -251,6 +253,9 @@ search_btn = st.button("🔍 검색", type="primary", use_container_width=True)
 do_search = search_btn or st.session_state.auto_search
 if st.session_state.auto_search:
     st.session_state.auto_search = False
+    st.session_state.search_query = ""
+else:
+    st.session_state.search_query = query
 
 if do_search and query.strip():
     mode_label = "스마트" if rag_mode else "일반"
@@ -301,8 +306,7 @@ if do_search and query.strip():
                         for i, term in enumerate(related):
                             with cols[i]:
                                 if st.button(term, key=f"related_{i}_{term}"):
-                                    # ★ 핵심 수정: 위젯의 key state를 직접 업데이트
-                                    st.session_state.query_input = term
+                                    st.session_state.search_query = term
                                     st.session_state.auto_search = True
                                     st.rerun()
 
