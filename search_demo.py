@@ -199,9 +199,9 @@ def run_normal_pipeline(query: str) -> str:
 
 def get_related_terms(query: str, answer: str) -> list:
     try:
-        prompt = f"""다음 의학용어 질문과 답변을 읽고, 질문에 나온 용어와 다른 관련 의학용어 5개만 뽑아줘.
+        prompt = f"""다음 의학용어 질문과 답변을 읽고, 질문에 나온 용어와 다른 관련 의학용어 8개만 뽑아줘.
 질문에 나온 단어나 그 번역어, 동의어는 제외하고, 연관된 다른 용어만 뽑아줘.
-반드시 아래 형식으로만 답해: 용어1, 용어2, 용어3, 용어4, 용어5
+반드시 아래 형식으로만 답해: 용어1, 용어2, 용어3, 용어4, 용어5, 용어6, 용어7, 용어8
 
 질문: {query}
 답변: {answer[:500]}
@@ -209,10 +209,10 @@ def get_related_terms(query: str, answer: str) -> list:
         response = client.models.generate_content(
             model=FLASH_MODEL,
             contents=prompt,
-            config=types.GenerateContentConfig(temperature=0, max_output_tokens=100)
+            config=types.GenerateContentConfig(temperature=0, max_output_tokens=150)
         )
         terms = [t.strip() for t in response.text.strip().split(",") if t.strip()]
-        return terms[:5]
+        return terms[:8]
     except:
         return []
 
@@ -220,8 +220,12 @@ def get_related_terms(query: str, answer: str) -> list:
 # ── Session State 초기화 ────────────────────────────────────────────
 if "auto_search" not in st.session_state:
     st.session_state.auto_search = False
-if "search_query" not in st.session_state:
-    st.session_state.search_query = ""
+if "query_input" not in st.session_state:
+    st.session_state.query_input = ""
+
+def on_related_click(term: str):
+    st.session_state.query_input = term
+    st.session_state.auto_search = True
 
 
 # ── Streamlit UI ────────────────────────────────────────────────────
@@ -239,12 +243,12 @@ st.divider()
 # ── 스마트 검색 토글 ────────────────────────────────────────────────
 rag_mode = st.toggle("✨ 스마트 검색 모드", value=True)
 
-# ── 검색창 ──────────────────────────────────────────────────────────
+# ── 검색창 (key로 session_state.query_input에 바인딩) ───────────────
 query = st.text_input(
     "질문을 입력하세요",
-    value=st.session_state.search_query,
     placeholder="예: 고혈압이란 무엇인가요? / What is hypertension?",
     max_chars=200,
+    key="query_input",
 )
 
 search_btn = st.button("🔍 검색", type="primary", use_container_width=True)
@@ -253,9 +257,6 @@ search_btn = st.button("🔍 검색", type="primary", use_container_width=True)
 do_search = search_btn or st.session_state.auto_search
 if st.session_state.auto_search:
     st.session_state.auto_search = False
-    st.session_state.search_query = ""
-else:
-    st.session_state.search_query = query
 
 if do_search and query.strip():
     mode_label = "스마트" if rag_mode else "일반"
@@ -272,10 +273,8 @@ if do_search and query.strip():
             cols = st.columns(len(related))
             for i, term in enumerate(related):
                 with cols[i]:
-                    if st.button(term, key=f"related_c_{i}_{term}"):
-                        st.session_state.search_query = term
-                        st.session_state.auto_search = True
-                        st.rerun()
+                    st.button(term, key=f"related_c_{i}_{term}",
+                              on_click=on_related_click, args=(term,))
     else:
         with st.spinner("검색 중... 잠시만 기다려주세요 🔄"):
             try:
@@ -315,10 +314,8 @@ if do_search and query.strip():
                         cols = st.columns(len(related))
                         for i, term in enumerate(related):
                             with cols[i]:
-                                if st.button(term, key=f"related_{i}_{term}"):
-                                    st.session_state.search_query = term
-                                    st.session_state.auto_search = True
-                                    st.rerun()
+                                st.button(term, key=f"related_{i}_{term}",
+                                          on_click=on_related_click, args=(term,))
 
             except Exception as e:
                 err = str(e)
