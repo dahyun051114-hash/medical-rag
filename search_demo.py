@@ -160,7 +160,7 @@ def generate_answer(prompt: str) -> str:
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=0.1,
-            max_output_tokens=2048,
+            max_output_tokens=8192,
         )
     )
     text = response.text.strip()
@@ -191,7 +191,7 @@ def run_normal_pipeline(query: str) -> str:
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=0.1,
-            max_output_tokens=2048,
+            max_output_tokens=8192,
         )
     )
     return response.text.strip()
