@@ -10,7 +10,6 @@ import os, sys, time, json, re
 import streamlit as st
 from pathlib import Path
 
-# ── API 키 로드 (Streamlit Cloud: st.secrets / 로컬: .env) ──────────
 def load_secrets():
     try:
         return (
@@ -29,12 +28,10 @@ def load_secrets():
 
 GEMINI_API_KEY, SUPABASE_URL, SUPABASE_KEY = load_secrets()
 
-# ── 동의어 사전 로드 ────────────────────────────────────────────────
 _SYN_PATH = Path(__file__).parent / "synonyms.json"
 with open(_SYN_PATH, encoding="utf-8") as _f:
     SYNONYMS = json.load(_f)
 
-# ── 라이브러리 임포트 ───────────────────────────────────────────────
 from supabase import create_client
 from google import genai
 from google.genai import types
@@ -46,8 +43,6 @@ client   = genai.Client(api_key=GEMINI_API_KEY)
 EMBED_MODEL = "gemini-embedding-001"
 FLASH_MODEL = "gemini-2.5-flash"
 
-
-# ── Supabase 캐시 ───────────────────────────────────────────────────
 def cache_get(query: str, mode: str):
     try:
         key = f"{mode}::{query}"
@@ -76,8 +71,6 @@ def log_search(query: str, mode: str, answer: str, elapsed: float):
     except:
         pass
 
-
-# ── 파이프라인 함수들 ───────────────────────────────────────────────
 def get_embedding(text: str) -> list:
     for attempt in range(3):
         try:
@@ -97,7 +90,6 @@ def get_embedding(text: str) -> list:
                 raise
     raise RuntimeError("임베딩 생성 실패 (rate limit)")
 
-
 def hybrid_search(query: str, embedding: list, match_count: int = 15) -> list:
     result = supabase.rpc("hybrid_search", {
         "query_text":      query,
@@ -108,7 +100,6 @@ def hybrid_search(query: str, embedding: list, match_count: int = 15) -> list:
         "source_filter":   None
     }).execute()
     return result.data or []
-
 
 def expanded_rrf_search(query: str, match_count: int = 10) -> list:
     expanded = expand_query(query)
@@ -129,7 +120,6 @@ def expanded_rrf_search(query: str, match_count: int = 10) -> list:
     sorted_ids = sorted(rrf_scores, key=lambda x: rrf_scores[x], reverse=True)
     return [rrf_data[cid] for cid in sorted_ids[:match_count]]
 
-
 def build_prompt(query: str, chunks: list) -> str:
     context = "\n\n".join([
         f"[자료 {i+1}]\n{c['chunk_text']}"
@@ -139,7 +129,7 @@ def build_prompt(query: str, chunks: list) -> str:
 
 [규칙]
 1. 반드시 아래 참고 자료의 내용만 사용하여 답하세요.
-2. 출처 표시([자료 N] 등)는 절대 하지 마세요.
+2. 출처 표시([자료 N], 자료 N:, (자료 N) 등 어떤 형태로도)는 절대 하지 마세요.
 3. 영문 의학 용어가 나오면 반드시 한국어 명칭도 함께 표기하세요. 예: 다낭성난소증후군(PCOS), 고혈압(Hypertension)
 4. 자료에 없는 추가적인 의학 지식이나 배경 지식은 포함하지 마세요.
 5. 자료에 질문과 직접 관련된 내용이 부분적으로라도 있으면, 그 내용을 조합하여 최대한 답변하세요. 자료에서 용어의 구성 요소(어근, 접두사, 접미사)나 관련 증상·치료·임상 사례가 있으면 이를 활용해 설명하세요.
@@ -153,7 +143,6 @@ def build_prompt(query: str, chunks: list) -> str:
 
 답변:"""
 
-
 def generate_answer(prompt: str) -> str:
     response = client.models.generate_content(
         model=FLASH_MODEL,
@@ -164,19 +153,44 @@ def generate_answer(prompt: str) -> str:
         )
     )
     text = response.text.strip()
-    text = re.sub(r'\[자료\s*\d+\]', '', text).strip()
+    text = re.sub(r'\[자료[\s\d,]+\]', '', text)
+    text = re.sub(r'\(자료[\s\d,]+\)', '', text)
+    text = re.sub(r'자료\s*\d+[:\s]', '', text)
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
     return text
 
+def keyword_fallback(query: str, existing_ids: set, limit: int = 5) -> list:
+    results = []
+    expanded = expand_query(query)
+    search_terms = list(dict.fromkeys([query] + expanded))[:6]
+    for term in search_terms:
+        try:
+            rows = supabase.table("mediterm_pdf_chunks")\
+                .select("id, chunk_text, source")\
+                .ilike("chunk_text", f"%{term}%")\
+                .limit(limit)\
+                .execute()
+            for row in (rows.data or []):
+                if row["id"] not in existing_ids:
+                    existing_ids.add(row["id"])
+                    results.append(row)
+            if len(results) >= limit:
+                break
+        except:
+            continue
+    return results[:limit]
 
 def run_rag_pipeline(query: str) -> dict:
     expanded = expand_query(query)[:3]
     chunks   = expanded_rrf_search(query)
+    existing_ids = {c["id"] for c in chunks}
+    fallback = keyword_fallback(query, existing_ids)
+    chunks = chunks + fallback
     if not chunks:
         return {"answer": None, "chunks": [], "expanded": expanded}
     prompt = build_prompt(query, chunks)
     answer = generate_answer(prompt)
     return {"answer": answer, "chunks": chunks, "expanded": expanded}
-
 
 def run_normal_pipeline(query: str) -> str:
     prompt = f"""당신은 의학용어 전문 교육 도우미입니다.
@@ -195,7 +209,6 @@ def run_normal_pipeline(query: str) -> str:
         )
     )
     return response.text.strip()
-
 
 def get_related_terms(query: str, answer: str) -> list:
     try:
@@ -216,8 +229,6 @@ def get_related_terms(query: str, answer: str) -> list:
     except:
         return []
 
-
-# ── Session State 초기화 ────────────────────────────────────────────
 if "auto_search" not in st.session_state:
     st.session_state.auto_search = False
 if "query_input" not in st.session_state:
@@ -227,8 +238,6 @@ def on_related_click(term: str):
     st.session_state.query_input = term
     st.session_state.auto_search = True
 
-
-# ── Streamlit UI ────────────────────────────────────────────────────
 st.set_page_config(
     page_title="의학용어 검색",
     page_icon="🏥",
@@ -236,14 +245,11 @@ st.set_page_config(
 )
 
 st.title("🏥 의학용어 검색 시스템")
-st.caption("의학용어 학습 도우미 | Gemini + Supabase")
 
 st.divider()
 
-# ── 스마트 검색 토글 ────────────────────────────────────────────────
 rag_mode = st.toggle("✨ 스마트 검색 모드", value=True)
 
-# ── 검색창 (key로 session_state.query_input에 바인딩) ───────────────
 query = st.text_input(
     "질문을 입력하세요",
     placeholder="예: 고혈압이란 무엇인가요? / What is hypertension?",
@@ -253,7 +259,6 @@ query = st.text_input(
 
 search_btn = st.button("🔍 검색", type="primary", use_container_width=True)
 
-# auto_search 플래그로 연관 용어 클릭 시 자동 검색
 do_search = search_btn or st.session_state.auto_search
 if st.session_state.auto_search:
     st.session_state.auto_search = False
@@ -261,7 +266,6 @@ if st.session_state.auto_search:
 if do_search and query.strip():
     mode_label = "스마트" if rag_mode else "일반"
 
-    # 캐시 확인
     cached = cache_get(query.strip(), mode_label)
     if cached:
         answer = cached
@@ -297,17 +301,14 @@ if do_search and query.strip():
                     st.markdown(answer)
                     st.caption(f"⏱️ 응답 시간: {elapsed}초")
 
-                    # 캐시 저장 & 로그
                     cache_set(query.strip(), mode_label, answer)
                     log_search(query.strip(), mode_label, answer, elapsed)
 
-                    # 동의어 확장 표시 (스마트 모드만)
                     if rag_mode and len(expanded) > 1:
                         with st.expander("🔤 동의어 확장 결과 보기"):
                             st.write("입력 질문에서 아래 용어들로 검색을 확장했습니다:")
                             st.code(", ".join(expanded))
 
-                    # 관련 의학용어
                     related = get_related_terms(query.strip(), answer)
                     if related:
                         st.markdown("**🔗 관련 의학용어**")
